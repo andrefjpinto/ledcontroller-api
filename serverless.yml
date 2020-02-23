@@ -1,0 +1,104 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: ledscontroller
+# app and org for use with dashboard.serverless.com
+app: leds-controller
+org: andrefjpinto
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-1
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt:
+              - StateDataInput
+              - Arn
+  ledControl:
+    handler: handler.ledControl
+    events:
+      - http:
+          path: led/{id}
+          method: post
+          request:
+            parameters:
+              paths:
+                id: true
+resources:
+  Resources:
+    StateDataInput:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: "state-data-ds-input"
+        ShardCount: 1
+        StreamEncryption:
+          EncryptionType: KMS
+          KeyId: alias/aws/kinesis
+    StateDataRule:
+      Type: "AWS::IoT::TopicRule"
+      Properties:
+        RuleName: StateDataRule
+        TopicRulePayload:
+          RuleDisabled: false
+          Sql: "SELECT *, timestamp() as metadata.processedTs, topic() as metadata.topic, clientid() as metadata.clientid, topic(1) as metadata.deviceType, topic(2) as metadata.directThingId, topic(3) as metadata.indirectThingId, topic(4) as metadata.dataFlow FROM '+/+/+/tc'"
+          AwsIotSqlVersion: "2016-03-23"
+          Actions:
+            -
+              Kinesis:
+                RoleArn:
+                  Fn::GetAtt:
+                    - "PushKinesisRole"
+                    - "Arn"
+                StreamName:
+                  Ref: "StateDataInput"
+                #thingId as Partition Key to ensure chronological order of stateDate processing
+                PartitionKey:
+                  Fn::Join: ['', ['$', '{topic(2)}']]
+    PushKinesisRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: PushKinesisRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - iot.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: "PutRecords"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "kinesis:PutRecord"
+                    - "kinesis:PutRecords"
+                  Resource:
+                    Fn::GetAtt:
+                      - "StateDataInput"
+                      - "Arn"
